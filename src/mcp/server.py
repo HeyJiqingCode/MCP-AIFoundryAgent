@@ -9,7 +9,7 @@ from azure.ai.projects.aio import AIProjectClient
 from azure.ai.agents.models import MessageRole
 from azure.identity.aio import DefaultAzureCredential as AsyncDefaultAzureCredential
 from dotenv import load_dotenv
-from mcp.server.fastmcp import FastMCP
+from fastmcp import FastMCP
 
 
 #######################
