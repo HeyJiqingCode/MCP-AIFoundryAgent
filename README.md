@@ -4,12 +4,12 @@ A Model Context Protocol (MCP) server that provides seamless access to agents bu
 
 ## Features
 
-- 🤖 **Agent Management**: List and discover all available agents  in your Azure AI Foundry project
-- 💬 **Agent Communication**: Connect to and interact with any agent
-- � **Agent Discovery**: View agent descriptions and capabilities to choose the right agent
-- � **Conversation Context**: Maintain conversation threads with agents for complex interactions
-- � **Response Tracking**: Get detailed response data including citations and execution metadata
-- 🚀 **Simple Integration**: Easy-to-use MCP tools for seamless AI agent workflows
+- **Agent Management**: List and discover all available agents  in your Azure AI Foundry project
+- **Agent Communication**: Connect to and interact with any agent
+- **Agent Discovery**: View agent descriptions and capabilities to choose the right agent
+- **Conversation Context**: Maintain conversation threads with agents for complex interactions
+- **Response Tracking**: Get detailed response data including citations and execution metadata
+- **Simple Integration**: Easy-to-use MCP tools for seamless AI agent workflows
 
 ## Quick Start
 
