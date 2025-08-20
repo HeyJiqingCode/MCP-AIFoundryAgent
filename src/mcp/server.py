@@ -1,0 +1,315 @@
+import asyncio
+import io
+import logging
+import os
+import sys
+from argparse import ArgumentParser
+from typing import Dict, Literal, Optional
+from azure.ai.projects.aio import AIProjectClient
+from azure.ai.agents.models import MessageRole
+from azure.identity.aio import DefaultAzureCredential as AsyncDefaultAzureCredential
+from dotenv import load_dotenv
+from mcp.server.fastmcp import FastMCP
+
+
+#######################
+# LOGGING CONFIGURATION
+#######################
+
+# Store the wrapped stderr stream to avoid multiple wrappers
+_utf8_stderr = None
+
+def configure_utf8_logging():
+    """Configure UTF-8 logging to stderr for MCP protocol compliance."""
+    global _utf8_stderr
+    
+    # Ensure UTF-8 logger output on all platforms
+    # Use stderr because MCP protocol mandates that stdout is used for data following pure JSON-RPC over stdout/stdio.
+    if _utf8_stderr is None:
+        _utf8_stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
+    handler = logging.StreamHandler(_utf8_stderr)
+    
+    # Message will not have timestamp because MCP Host will add the timestamp.
+    # Message will have logging level information, although it will be passed to stderr stream.
+    formatter = logging.Formatter(
+        fmt='[%(levelname)-8s] [%(name)s] %(message)s',
+    )
+    handler.setFormatter(formatter)
+
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.INFO)
+    root_logger.handlers.clear()
+    root_logger.addHandler(handler)
+
+# Configure logging
+configure_utf8_logging()
+logger = logging.getLogger(__name__)
+
+
+#######################
+# MCP SERVER SETUP
+#######################
+
+# Initialize FastMCP server with detailed information
+mcp = FastMCP(
+    "azure-ai-foundry-mcp-server",
+    description="Azure AI Foundry MCP Server - Provides access to Azure AI Agents for listing and querying agents in your Azure AI project",
+    version="1.0.0"
+)
+
+
+#######################
+# CONFIGURATION SETUP
+#######################
+
+# Load environment variables
+load_dotenv()
+
+try:
+    # Azure AI Agent configuration
+    AZURE_AI_PROJECT_ENDPOINT = os.environ.get("AZURE_AI_PROJECT_ENDPOINT")
+
+    # Initialization flags
+    AGENT_INITIALIZED = bool(AZURE_AI_PROJECT_ENDPOINT)
+    if not AGENT_INITIALIZED:
+        logger.warning("AZURE_AI_PROJECT_ENDPOINT is missing, agent features will not work")
+
+except Exception as e:
+    logger.error(f"Initialization error: {str(e)}")
+    AZURE_AI_PROJECT_ENDPOINT = None
+    AGENT_INITIALIZED = False
+
+# Global variables for agent client and cache
+AI_CLIENT: Optional[AIProjectClient] = None
+AGENT_CACHE = {}
+USER_AGENT = "foundry-mcp"
+
+
+#######################
+# HELPER FUNCTIONS
+#######################
+
+async def initialize_agent_client():
+    global AI_CLIENT
+
+    if not AGENT_INITIALIZED:
+        return False
+
+    try:
+        async_credential = AsyncDefaultAzureCredential()
+        AI_CLIENT = AIProjectClient(endpoint=AZURE_AI_PROJECT_ENDPOINT, credential=async_credential, user_agent=USER_AGENT)
+        return True
+    except Exception as e:
+        logger.error(f"Failed to initialize AIProjectClient: {str(e)}")
+        return False
+
+
+async def get_agent(client: AIProjectClient, agent_id: str) -> Dict:
+    global AGENT_CACHE
+
+    # Check cache first
+    if agent_id in AGENT_CACHE:
+        return AGENT_CACHE[agent_id]
+
+    # Fetch agent if not in cache
+    try:
+        agent = await client.agents.get_agent(agent_id=agent_id)
+        
+        agent_info = {
+            "id": agent.id,
+            "name": agent.name,
+            "description": agent.description,
+            "model": agent.model,
+            "created_at": str(agent.created_at),
+            "tools_count": len(agent.tools) if agent.tools else 0,
+            "agent_object": agent
+        }
+        
+        AGENT_CACHE[agent_id] = agent_info
+        return agent_info
+    except Exception as e:
+        logger.error(f"Agent retrieval failed - ID: {agent_id}, Error: {str(e)}")
+        raise ValueError(f"Agent not found or inaccessible: {agent_id}")
+
+
+async def query_agent(client: AIProjectClient, agent_id: str, query: str) -> Dict:
+    """Query an Azure AI Agent and get the response with full thread/run data."""
+    try:
+        # Get agent info (from cache or fetch it)
+        agent_info = await get_agent(client, agent_id)
+        agent = agent_info["agent_object"]  # Get the original Agent object
+
+        # Always create a new thread
+        thread = await client.agents.threads.create()
+        thread_id = thread.id
+
+        # Add message to thread
+        await client.agents.messages.create(thread_id=thread_id, role=MessageRole.USER, content=query)
+
+        # Process the run
+        run = await client.agents.runs.create(thread_id=thread_id, agent_id=agent_id)
+        run_id = run.id
+
+        # Poll until the run is complete
+        while run.status in ["queued", "in_progress", "requires_action"]:
+            await asyncio.sleep(1)  # Non-blocking sleep
+            run = await client.agents.runs.get(thread_id=thread_id, run_id=run.id)
+
+        if run.status == "failed":
+            error_msg = f"Agent run failed: {run.last_error}"
+            logger.error(error_msg)
+            return {
+                "success": False,
+                "error": error_msg,
+                "thread_id": thread_id,
+                "run_id": run_id,
+                "result": f"Error: {error_msg}",
+            }
+
+        # Get the agent's response
+        response_messages = client.agents.messages.list(thread_id=thread_id)
+        response_message = None
+        async for msg in response_messages:
+            if msg.role == MessageRole.AGENT:
+                response_message = msg
+
+        result = ""
+        citations = []
+
+        if response_message:
+            # Collect text content
+            for text_message in response_message.text_messages:
+                result += text_message.text.value + "\n"
+
+            # Collect citations
+            for annotation in response_message.url_citation_annotations:
+                citation = f"[{annotation.url_citation.title}]({annotation.url_citation.url})"
+                if citation not in citations:
+                    citations.append(citation)
+
+        # Add citations if any
+        if citations:
+            result += "\n\n## Sources\n"
+            for citation in citations:
+                result += f"- {citation}\n"
+
+        return {
+            "success": True,
+            "thread_id": thread_id,
+            "run_id": run_id,
+            "result": result.strip(),
+            "citations": citations,
+        }
+
+    except Exception as e:
+        logger.error(f"Agent query failed - ID: {agent_id}, Error: {str(e)}")
+        raise
+
+
+#####################
+# MCP Server TOOLS  #
+#####################
+
+@mcp.tool()
+async def list_agents() -> str:
+    """
+    List all available Azure AI Agents in your project.
+    
+    Returns a formatted list of agents with their names, IDs, and descriptions.
+    This helps you understand what each agent does before connecting to it.
+    """
+    if not AGENT_INITIALIZED:
+        return "Error: Azure AI Foundry Agent service is not initialized. Check environment variables."
+
+    if AI_CLIENT is None:
+        await initialize_agent_client()
+        if AI_CLIENT is None:
+            return "Error: Failed to initialize Azure AI Foundry Agent client."
+
+    try:
+        agents = AI_CLIENT.agents.list_agents()
+        if not agents:
+            return "No agents found in the Azure AI Foundry Agent Service."
+
+        result = "## Available Azure AI Agents\n\n"
+        async for agent in agents:
+            description = agent.description if agent.description else "No description available"
+            result += f"- **{agent.name}**: `{agent.id}`\n  - Description: {description}\n\n"
+
+        return result
+    except Exception as e:
+        logger.error(f"Error listing agents: {str(e)}")
+        return f"Error listing agents: {str(e)}"
+
+
+@mcp.tool()
+async def connect_agent(agent_id: str, query: str) -> Dict:
+    """
+    Connect to a specific Azure AI Agent and execute a query.
+    
+    This tool allows you to interact with any of your Azure AI Agents by providing
+    the agent ID and your question or task. The agent will process your request
+    using its configured tools and capabilities.
+
+    Parameters:
+    - agent_id: The unique identifier of the agent (get this from list_agents)
+    - query: Your question or task for the agent to process
+
+    Returns:
+    - success: Whether the query was successful
+    - result: The agent's response to your query
+    - thread_id: Conversation thread ID for tracking
+    - run_id: Execution run ID for evaluation
+    - citations: Any sources referenced in the response
+    """
+    if not AGENT_INITIALIZED:
+        return {"error": "Azure AI Foundry Agent service is not initialized. Check environment variables."}
+
+    if AI_CLIENT is None:
+        await initialize_agent_client()
+        if AI_CLIENT is None:
+            return {"error": "Failed to initialize Azure AI Foundry Agent client."}
+
+    try:
+        response = await query_agent(AI_CLIENT, agent_id, query)
+        return response
+    except Exception as e:
+        logger.error(f"Error connecting to agent: {str(e)}")
+        return {"error": f"Error connecting to agent: {str(e)}"}
+
+
+#######################
+# MAIN ENTRY POINT
+#######################
+
+def main() -> None:
+    """Runs the MCP server"""
+    parser = ArgumentParser(description="Start the MCP service with provided or default configuration.")
+
+    parser.add_argument('--transport', required=False, default='stdio',
+                        help='Transport protocol (sse | stdio | streamable-http) (default: stdio)')
+    parser.add_argument('--envFile', required=False, default='.env',
+                        help='Path to .env file (default: .env)')
+
+    # Parse the application arguments
+    args = parser.parse_args()
+
+    # Retrieve the specified transport and environment file
+    specified_transport: Literal["stdio", "sse", "streamable-http"] = args.transport
+    mcp_env_file = args.envFile
+
+    logger.info(f"Starting MCP server: Transport = {specified_transport}")
+
+    # Check if envFile exists and load it
+    if mcp_env_file and os.path.exists(mcp_env_file):
+        load_dotenv(dotenv_path=mcp_env_file)
+        logger.info(f"Environment variables loaded from {mcp_env_file}")
+    else:
+        logger.warning(f"Environment file '{mcp_env_file}' not found. Skipping environment loading.")
+
+    # Run the server
+    mcp.run(transport=specified_transport)
+
+
+if __name__ == "__main__":
+    main()
