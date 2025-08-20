@@ -52,9 +52,8 @@ logger = logging.getLogger(__name__)
 
 # Initialize FastMCP server with detailed information
 mcp = FastMCP(
-    "azure-ai-foundry-mcp-server",
-    description="Azure AI Foundry MCP Server - Provides access to Azure AI Agents for listing and querying agents in your Azure AI project",
-    version="1.0.0"
+    name="Azure AI Foundry Agents MCP Server",
+    instructions="A Model Context Protocol server that enables seamless discovery and interaction with agents built by Azure AI Foundry. Provides tools to list available agents with their capabilities and execute queries against specific agents in your Azure AI project."
 )
 
 
