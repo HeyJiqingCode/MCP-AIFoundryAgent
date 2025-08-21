@@ -255,7 +255,7 @@ def main() -> None:
         AGENT_INITIALIZED = False
 
     # Run the server
-    mcp.run(transport="http", host="0.0.0.0", port=9000)
+    mcp.run(transport="http", host="0.0.0.0", port=8000)
 
 
 if __name__ == "__main__":
