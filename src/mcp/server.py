@@ -17,18 +17,14 @@ load_dotenv()
 # Store the wrapped stderr stream to avoid multiple wrappers
 _utf8_stderr = None
 
+# Configure UTF-8 logging to stderr for MCP protocol compliance.
 def configure_utf8_logging():
-    """Configure UTF-8 logging to stderr for MCP protocol compliance."""
     global _utf8_stderr
     
-    # Ensure UTF-8 logger output on all platforms
-    # Use stderr because MCP protocol mandates that stdout is used for data following pure JSON-RPC over stdout/stdio.
     if _utf8_stderr is None:
         _utf8_stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
     handler = logging.StreamHandler(_utf8_stderr)
     
-    # Message will not have timestamp because MCP Host will add the timestamp.
-    # Message will have logging level information, although it will be passed to stderr stream.
     formatter = logging.Formatter(
         fmt='[%(levelname)-8s] [%(name)s] %(message)s',
     )
@@ -39,21 +35,15 @@ def configure_utf8_logging():
     root_logger.handlers.clear()
     root_logger.addHandler(handler)
 
-# Configure logging
 configure_utf8_logging()
 logger = logging.getLogger(__name__)
 
 # Initialize FastMCP server with detailed information
-mcp = FastMCP(
-    name="Azure AI Foundry Agents MCP Server",
-    instructions="A Model Context Protocol server that enables seamless discovery and interaction with agents built by Azure AI Foundry. Provides tools to list available agents with their capabilities and execute queries against specific agents in your Azure AI project."
-)
+mcp = FastMCP("Azure AI Foundry Agents MCP Server")
 
-# Global configuration variables (will be set after loading environment variables)
+# Global configuration variables
 AZURE_AI_PROJECT_ENDPOINT = None
 AGENT_INITIALIZED = False
-
-# Global variables for agent client and cache
 AI_CLIENT: Optional[AIProjectClient] = None
 AGENT_CACHE = {}
 USER_AGENT = "foundry-mcp"
@@ -81,11 +71,9 @@ async def initialize_agent_client():
 async def get_agent(client: AIProjectClient, agent_id: str) -> Dict:
     global AGENT_CACHE
 
-    # Check cache first
     if agent_id in AGENT_CACHE:
         return AGENT_CACHE[agent_id]
 
-    # Fetch agent if not in cache
     try:
         agent = await client.agents.get_agent(agent_id=agent_id)
         
@@ -107,26 +95,20 @@ async def get_agent(client: AIProjectClient, agent_id: str) -> Dict:
 
 # Query an Azure AI Foundry Agent
 async def query_agent(client: AIProjectClient, agent_id: str, query: str) -> Dict:
-    """Query an Azure AI Foundry Agent and get the response with full thread/run data."""
     try:
-        # Get agent info (from cache or fetch it)
         agent_info = await get_agent(client, agent_id)
-        agent = agent_info["agent_object"]  # Get the original Agent object
+        agent = agent_info["agent_object"]
 
-        # Always create a new thread
         thread = await client.agents.threads.create()
         thread_id = thread.id
 
-        # Add message to thread
         await client.agents.messages.create(thread_id=thread_id, role=MessageRole.USER, content=query)
 
-        # Process the run
         run = await client.agents.runs.create(thread_id=thread_id, agent_id=agent_id)
         run_id = run.id
 
-        # Poll until the run is complete
         while run.status in ["queued", "in_progress", "requires_action"]:
-            await asyncio.sleep(1)  # Non-blocking sleep
+            await asyncio.sleep(1)
             run = await client.agents.runs.get(thread_id=thread_id, run_id=run.id)
 
         if run.status == "failed":
@@ -140,7 +122,6 @@ async def query_agent(client: AIProjectClient, agent_id: str, query: str) -> Dic
                 "result": f"Error: {error_msg}",
             }
 
-        # Get the agent's response
         response_messages = client.agents.messages.list(thread_id=thread_id)
         response_message = None
         async for msg in response_messages:
@@ -151,17 +132,14 @@ async def query_agent(client: AIProjectClient, agent_id: str, query: str) -> Dic
         citations = []
 
         if response_message:
-            # Collect text content
             for text_message in response_message.text_messages:
                 result += text_message.text.value + "\n"
 
-            # Collect citations
             for annotation in response_message.url_citation_annotations:
                 citation = f"[{annotation.url_citation.title}]({annotation.url_citation.url})"
                 if citation not in citations:
                     citations.append(citation)
 
-        # Add citations if any
         if citations:
             result += "\n\n## Sources\n"
             for citation in citations:
@@ -180,14 +158,15 @@ async def query_agent(client: AIProjectClient, agent_id: str, query: str) -> Dic
         raise
 
 # List all available Azure AI Foundry Agents
-@mcp.tool()
-async def list_agents() -> str:
-    """
-    List all available Azure AI Foundry Agents in your project.
-    
+@mcp.tool(
+    name="list_agents",
+    description="""
+    List all available Azure AI Foundry Agents in your project. 
     Returns a formatted list of agents with their names, IDs, and descriptions.
     This helps you understand what each agent does before connecting to it.
     """
+)
+async def list_agents() -> str:
     if not AGENT_INITIALIZED:
         return "Error: Azure AI Foundry Agent service is not initialized. Check environment variables."
 
@@ -212,9 +191,9 @@ async def list_agents() -> str:
         return f"Error listing agents: {str(e)}"
 
 # Connect to a specific Azure AI Foundry Agent
-@mcp.tool()
-async def connect_agent(agent_id: str, query: str) -> Dict:
-    """
+@mcp.tool(
+    name="connect_agent",
+    description="""
     Connect to a specific Azure AI Foundry Agent and execute a query.
 
     This tool allows you to interact with any of your Azure AI Foundry Agents by providing
@@ -232,6 +211,8 @@ async def connect_agent(agent_id: str, query: str) -> Dict:
     - run_id: Execution run ID for evaluation
     - citations: Any sources referenced in the response
     """
+)
+async def connect_agent(agent_id: str, query: str) -> Dict:
     if not AGENT_INITIALIZED:
         return {"error": "Azure AI Foundry Agent service is not initialized. Check environment variables."}
 
@@ -249,28 +230,21 @@ async def connect_agent(agent_id: str, query: str) -> Dict:
 
 # Main entry point
 def main() -> None:
-    """Runs the MCP server"""
     global AZURE_AI_PROJECT_ENDPOINT, AGENT_INITIALIZED
     
     parser = ArgumentParser(description="Start the MCP service with provided or default configuration.")
-
     parser.add_argument('--transport', required=False, default='stdio',
                         help='Transport protocol (sse | stdio | streamable-http) (default: stdio)')
 
-    # Parse the application arguments
     args = parser.parse_args()
 
-    # Retrieve the specified transport
     specified_transport: Literal["stdio", "sse", "streamable-http"] = args.transport
 
     logger.info(f"Starting MCP server: Transport = {specified_transport}")
 
-    # Initialize configuration
     try:
-        # Azure AI Foundry Agent configuration
         AZURE_AI_PROJECT_ENDPOINT = os.environ.get("AZURE_AI_PROJECT_ENDPOINT")
 
-        # Initialization flags
         AGENT_INITIALIZED = bool(AZURE_AI_PROJECT_ENDPOINT)
         if not AGENT_INITIALIZED:
             logger.warning("AZURE_AI_PROJECT_ENDPOINT is missing, agent features will not work")
@@ -281,7 +255,7 @@ def main() -> None:
         AGENT_INITIALIZED = False
 
     # Run the server
-    mcp.run(transport=specified_transport)
+    mcp.run(transport="http", host="0.0.0.0", port=9000)
 
 
 if __name__ == "__main__":
