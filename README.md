@@ -36,7 +36,7 @@ AZURE_CLIENT_ID=your_client_id
 AZURE_CLIENT_SECRET=your_client_secrets
 
 # Azure AI Foundry
-AZURE_AI_PROJECT_ENDPOINT=your_ai_foundry_project_endpoint
+AZURE_AI_FOUNDRY_PROJECT_ENDPOINT=your_ai_foundry_project_endpoint
 ```
 
 **4/ Run the server**:
@@ -83,7 +83,7 @@ docker build -t azure-ai-foundry-agent-mcp:1.0.0 -f Dockerfile .
 **3/ Run the container**:
 ```bash
 docker run -itd -p 8000:8000 \
-  -e AZURE_AI_PROJECT_ENDPOINT=your_ai_foundry_project_endpoint \
+  -e AZURE_AI_FOUNDRY_PROJECT_ENDPOINT=your_ai_foundry_project_endpoint \
   -e AZURE_TENANT_ID=your_tenant_id \
   -e AZURE_CLIENT_ID=your_client_id \
   -e AZURE_CLIENT_SECRET=your_secret \
