@@ -42,7 +42,7 @@ logger = logging.getLogger(__name__)
 mcp = FastMCP("Azure AI Foundry Agents MCP Server")
 
 # Global configuration variables
-AZURE_AI_PROJECT_ENDPOINT = None
+AZURE_AI_FOUNDRY_PROJECT_ENDPOINT = None
 AGENT_INITIALIZED = False
 AI_CLIENT: Optional[AIProjectClient] = None
 AGENT_CACHE = {}
@@ -61,7 +61,7 @@ async def initialize_agent_client():
             client_id=os.environ.get("AZURE_CLIENT_ID"),
             client_secret=os.environ.get("AZURE_CLIENT_SECRET")
         )
-        AI_CLIENT = AIProjectClient(endpoint=AZURE_AI_PROJECT_ENDPOINT, credential=credential, user_agent=USER_AGENT)
+        AI_CLIENT = AIProjectClient(endpoint=AZURE_AI_FOUNDRY_PROJECT_ENDPOINT, credential=credential, user_agent=USER_AGENT)
         return True
     except Exception as e:
         logger.error(f"Failed to initialize AIProjectClient: {str(e)}")
@@ -230,7 +230,7 @@ async def connect_agent(agent_id: str, query: str) -> Dict:
 
 # Main entry point
 def main() -> None:
-    global AZURE_AI_PROJECT_ENDPOINT, AGENT_INITIALIZED
+    global AZURE_AI_FOUNDRY_PROJECT_ENDPOINT, AGENT_INITIALIZED
     
     parser = ArgumentParser(description="Start the MCP service with provided or default configuration.")
     parser.add_argument('--transport', required=False, default='stdio',
@@ -243,15 +243,15 @@ def main() -> None:
     logger.info(f"Starting MCP server: Transport = {specified_transport}")
 
     try:
-        AZURE_AI_PROJECT_ENDPOINT = os.environ.get("AZURE_AI_PROJECT_ENDPOINT")
+        AZURE_AI_FOUNDRY_PROJECT_ENDPOINT = os.environ.get("AZURE_AI_FOUNDRY_PROJECT_ENDPOINT")
 
-        AGENT_INITIALIZED = bool(AZURE_AI_PROJECT_ENDPOINT)
+        AGENT_INITIALIZED = bool(AZURE_AI_FOUNDRY_PROJECT_ENDPOINT)
         if not AGENT_INITIALIZED:
-            logger.warning("AZURE_AI_PROJECT_ENDPOINT is missing, agent features will not work")
+            logger.warning("AZURE_AI_FOUNDRY_PROJECT_ENDPOINT is missing, agent features will not work")
 
     except Exception as e:
         logger.error(f"Initialization error: {str(e)}")
-        AZURE_AI_PROJECT_ENDPOINT = None
+        AZURE_AI_FOUNDRY_PROJECT_ENDPOINT = None
         AGENT_INITIALIZED = False
 
     # Run the server
