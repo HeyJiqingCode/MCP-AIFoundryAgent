@@ -55,7 +55,7 @@ python src/mcp/server.py --transport streamable-http
 ```json
 {
   "mcpServers": {
-    "DeepResearch": {
+    "AIFoundryAgent": {
       "type": "streamableHttp",
       "url": "http://127.0.0.1:8000/mcp/",
       "headers": {
@@ -82,7 +82,7 @@ docker build -t azure-ai-foundry-agent-mcp:1.0.0 -f Dockerfile .
 
 **3/ Run the container**:
 ```bash
-docker run -itd -p 8000:8000 \
+docker run -itd -p 8000:8000 --name AIFoundryAgent \
   -e AZURE_AI_FOUNDRY_PROJECT_ENDPOINT=your_ai_foundry_project_endpoint \
   -e AZURE_TENANT_ID=your_tenant_id \
   -e AZURE_CLIENT_ID=your_client_id \
@@ -94,7 +94,7 @@ docker run -itd -p 8000:8000 \
 ```json
 {
   "mcpServers": {
-    "DeepResearch": {
+    "AIFoundryAgent": {
       "type": "streamableHttp",
       "url": "http://127.0.0.1:8000/mcp/",
       "headers": {
