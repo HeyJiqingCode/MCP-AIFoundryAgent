@@ -157,3 +157,7 @@ The server supports three transport protocols:
 - `streamable-http`: HTTP streaming for containerized deployments
 
 All transports run on port 8000 by default.
+
+## More Details
+
+See [MCP Server for Azure AI Foundry Agent](https://heyjiqing.notion.site/MCP-Server-for-Azure-AI-Foundry-Agent-256de7b6e4e880238e13ce0c359a0bc7)
